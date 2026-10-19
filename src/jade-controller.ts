@@ -1,5 +1,8 @@
 const sendChat = (chat: string) => (game.GetService("TextChatService").WaitForChild("TextChannels").WaitForChild("RBXGeneral") as TextChannel).SendAsync(chat);
 
+const Players = game.GetService("Players");
+const LocalPlayer = Players.LocalPlayer;
+
 namespace CommandHandler {
      function isCharWhitespace(text?: string): boolean {
           if (!text)
@@ -37,6 +40,8 @@ namespace CommandHandler {
           COMMA = ",",
           PIPE = "|",
           EOF = "EOF",
+
+          _ANY = "any",
      }
 
      class Token {
@@ -59,7 +64,7 @@ namespace CommandHandler {
           }
 
           protected error(message?: string): void {
-               throw `error near ${this.text.sub(this.pos-10, this.pos-1)} <-- ${((message !== undefined) && '| ') + (message || '')}`;
+               throw `error near >>${this.text.sub(this.pos-5, this.pos-1)}<<  ${((message !== undefined) && '| ') + (message || '')}`;
           }
 
           protected advance(): void {
@@ -90,7 +95,7 @@ namespace CommandHandler {
           protected string(): string {
                let result = '';
                while (this.currentChar !== '"') {
-                    result = result + this.text;
+                    result = result + this.currentChar;
                     this.advance();
                }
                this.advance();
@@ -153,37 +158,55 @@ namespace CommandHandler {
                this.currentToken = this.getNextToken();
           }
 
-          protected eat(t: TokenType) {
-               const curType = this.currentToken?.tokenType;
-               if (curType === t) {
+          protected eat(t?: TokenType): Token {
+               const curType = this.currentToken;
+               if ((curType.tokenType === t) || t === undefined) {
                     this.currentToken = this.getNextToken();
-                    print(`${curType} passed`);
                } else {
-                    this.error(`expected ${t}; got ${curType}`);
+                    this.error(`expected ${t}; got ${curType.tokenType}`);
                }
+               return curType;
           }
 
-          protected interpretArgs(): Array<unknown> {
-               const args = [];
-               args.push(this.expr());
+          protected interpretArgs(): Array<Token> {
+               const args: Token[] = [];
+               args.push(this.eat());
                while (this.is(TokenType.COMMA)) {
-                    args.push(this.expr());
+                    args.push(this.eat());
                }
                return args;
           }
 
-          protected interpretCommand() {
+          protected interpretCommand(source: Player) {
                this.eat(TokenType.ASTERISK);
-               const command = this.currentToken.value;
-               this.eat(TokenType.IDENT);
-               if (this.is(TokenType.SEMI)) {
-                    this.eat(TokenType.SEMI);
-                    const args = this.interpretArgs();
-               } else if (!this.is(TokenType.EOF)) {
-                    this.error("arguments require a ';' symbol");
+
+               const command = this.eat(TokenType.IDENT).value;
+               
+               let executingCommand = Command.registered.find(cmd => cmd.name === command);
+               if (!executingCommand) {
+                    throw `command "${command}" doesnt exist`;
                }
 
-
+               if (!this.is(TokenType.SEMI)) {
+                    this.eat(TokenType.EOF);
+                    return executingCommand.exe({'source': source, 'argv': []});
+               }
+               this.eat(TokenType.SEMI);
+               
+               const args = this.interpretArgs();
+               executingCommand.requiredParameters.forEach((t, i) => {
+                    let arg = args[i];
+                    if (!arg) {
+                         this.error("argument mismatch");
+                         return;                                
+                    }
+                    if ((arg.tokenType !== t.type)) {
+                         this.error(`invalid cast "${arg.tokenType}" -> "${t.type}"`);
+                         return;
+                    }
+               });
+               let result = executingCommand.exe({'source': source, 'argv': args}); 
+               return result.message;
           }
 
           protected expr(): unknown {
@@ -194,6 +217,10 @@ namespace CommandHandler {
                          this.eat(TokenType.RPAREN);
                          return result;
                     }
+                    case TokenType.STRING:
+                         return this.currentToken.value;
+                    case TokenType.INT:
+                         return this.currentToken.value;
                     default:
                          this.error("expression failed");
                }
@@ -203,8 +230,8 @@ namespace CommandHandler {
                return this.currentToken.tokenType === t;
           }
 
-          public interpret() {
-               this.interpretCommand();
+          public interpret(source: Player) {
+               return this.interpretCommand(source);
           }
      }
 
@@ -212,26 +239,33 @@ namespace CommandHandler {
           source: Player;
           argv: t;
      }
+     interface CommandParameter {
+          name: string,
+          type: TokenType
+     }
      interface CommandResult {
           success: boolean;
           message?: string;
      }
 
      export class Command<t extends unknown[]> {
-          private static registered: Command<[...unknown[]]>[] = [];
+          public static registered: Command<[...unknown[]]>[] = [];
 
           private bound = [];
 
           constructor(
                public readonly name: string,
                public readonly description: string,
-               public readonly requiredParameters: TokenType[],
                public readonly permissionLevel: PermissionStatus,
-               public readonly optionalParameters?: TokenType[],
+               public readonly requiredParameters: CommandParameter[],
+               public readonly optionalParameters?: CommandParameter[],
           ) {
                Command.registered.push(this);
           }
 
+          /**
+           * @virtual 
+           */
           public exe(cmdInfo: CommandInfo<t>): CommandResult {
                return {
                     'message': "undefined command",
@@ -240,50 +274,102 @@ namespace CommandHandler {
           }
      }
           
-     export function ExecuteCommand(commandText: string) {
+     export function ExecuteCommand(source: Player,commandText: string) {
+          print("Command executing | raw cmd:", commandText);
           let p = new Interpreter(commandText);
-          return p.interpret();
+          return p.interpret(source);
      }
-}
 
-enum PermissionStatus {
-     None,
-     Limited,
-     Full
-}
+     enum PermissionStatus {
+          None,
+          Limited,
+          Full
+     }
 
-class Permission {
-     public static Registered: Set<Permission> = new Set();
-     
-     public static GetPlayerPermission(player: Player): PermissionStatus {
-          let status = PermissionStatus.None;
-          Permission.Registered.forEach(item => {
-               if (item.instPlayer === player) {
-                    status = item.status;
+     class Permission {
+          public static Registered: Set<Permission> = new Set();
+          
+          public static GetPlayerPermission(player: Player): PermissionStatus {
+               let status = PermissionStatus.None;
+               Permission.Registered.forEach(item => {
+                    if (item.instPlayer === player) {
+                         status = item.status;
+                    }
+               });
+               return status;
+          }
+
+          constructor(
+               public status: PermissionStatus,
+               public chatId: number,
+               public instPlayer?: Player,
+          ) {
+               Permission.Registered.add(this);
+          }
+
+          public Remove() {
+               Permission.Registered.delete(this);
+          }
+     }
+
+     let cmdT = new Command<[]>(
+          "testfor",
+          "tests for a certain value",
+          PermissionStatus.Limited,
+          [
+               {
+                    name: "value",
+                    type: TokenType._ANY
                }
-          });
-          return status;
-     }
-
-     constructor(
-          public status: PermissionStatus,
-          public chatId: number,
-          public instPlayer?: Player,
-     ) {
-          Permission.Registered.add(this);
-     }
-
-     public Remove() {
-          Permission.Registered.delete(this);
-     }
+          ]
+     );
 }
+ 
+// arguments and runtime commands still unimplemented
+// work on CommandHandler's command based things, then work on runtime soon
 
-let cmd = new CommandHandler.Command<[]>("testfor", "tests for a certain value", [], PermissionStatus.Full);
-cmd.exe = (d) => {
-     return {message: "", success: true};
+// text chat handler
+game.GetService("TextChatService").OnIncomingMessage = (message) => {
+     let source: Player|undefined = game.GetService("Players").GetPlayerByUserId(message.TextSource?.UserId || 0);
+     if (!source)
+          return;
+
+     return undefined;
 };
 
+//exec console handler
+{
+     let g = getgenv() as unknown as Record<string, unknown>;
+     const needle = "__jade_consoleInterpreter";
 
-// interprets the command perfectly
-// arguments should be implemented next near 'protected interpretCommand() {...}'
-CommandHandler.ExecuteCommand("*help;");
+     if (g[needle]) {
+          g[needle] = undefined;
+          rconsoledestroy();
+          task.wait(1);
+     }
+     rconsolecreate();
+     rconsolesettitle("jade alt-controller local console");
+     // on console input
+     g[needle] = (input: string) => {
+          if (input === "close") {
+               rconsoledestroy();
+               g[needle] = undefined;
+               return;
+          }
+          let [success, result] = pcall(CommandHandler.ExecuteCommand, LocalPlayer, input);
+          if (!success) {
+               rconsoleerror(`er: ${result as unknown as string}\n`);
+               return;
+          }
+          rconsoleprint(`result: ${result as unknown as string}\n`);
+     };
+
+     task.spawn(() => {
+          while (task.wait() && (g[needle] !== undefined)) {
+               const _input = rconsoleinput();
+               
+               rconsoleprint(`> ${_input}\n`);
+               (g[needle] as Callback)(_input);
+          }
+     });
+}

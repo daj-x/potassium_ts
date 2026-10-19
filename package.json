@@ -22,7 +22,7 @@
   },
   "devDependencies": {
     "@rbxts/compiler-types": "^3.0.0-types.0",
-    "@rbxts/types": "^1.0.957",
+    "@rbxts/types": "^1.0.958",
     "@typescript-eslint/eslint-plugin": "^8.71.2",
     "@typescript-eslint/parser": "^8.71.2",
     "eslint": "^10.12.0",
@@ -31,6 +31,10 @@
     "eslint-plugin-roblox-ts": "^1.4.1",
     "prettier": "^3.9.10",
     "roblox-ts": "^3.0.0",
+    "ts-patch": "^3.3.0",
     "typescript": "^5.9.3"
+  },
+  "dependencies": {
+    "rbxts-transform-debug": "^2.2.0"
   }
 }

@@ -17,12 +17,18 @@
 		"target": "ESNext",
 		"typeRoots": ["node_modules/@rbxts"],
 
+		"plugins": [
+			{
+				"enabled": true,
+				"transform": "rbxts-transform-debug"
+			}
+		],
+
 		// configurable
 		"rootDir": "src",
-		"outDir": "out",
+		"outDir": "lua",
 		"incremental": true,
 		"tsBuildInfoFile": "out/tsconfig.tsbuildinfo",
-		"declaration": true
-	},
-	"exclude": []
+		"declaration": false
+	}
 }
