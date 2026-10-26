@@ -12,5 +12,7 @@
 	"eslint.run": "onType",
 	"eslint.format.enable": true,
 	"eslint.useFlatConfig": false,
-	"js/ts.tsdk.path": "node_modules/typescript/lib"
+	"js/ts.tsdk.path": "node_modules/typescript/lib",
+	"discord.enabled": false,
+	"vscord.enable": true
 }

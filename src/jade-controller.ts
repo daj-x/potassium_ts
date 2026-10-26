@@ -7,45 +7,64 @@ const LocalPlayer = Players.LocalPlayer;
 namespace CommandHandler {
      function isCharWhitespace(text?: string): boolean {
           if (!text)
-               throw "ok";
+               return false;
           const char = text.sub(1, 1);
-          return char.gsub("%s+", "")[0] === "";
+          return char.match("^%s+$")[0] !== undefined;
      }
 
      function isCharInteger(text?: string): boolean {
           if (!text)
-               throw "ok";
+               return false;
           const char = text.sub(1, 1);
-          return "0123456789".find(char)[0] !== undefined;
+          return "0123456789".find(char, 1, true)[0] !== undefined;
      }
 
      function isCharAlphanumeric(text?: string): boolean {
           if (!text)
-               throw "ok";
+               return false;
           const char = text.sub(1, 1);
           const isInt = isCharInteger(char);
           if (isInt)
                return true;
-          return "abcdefghijklmnopqrstuvwxyz".find(char.lower())[0] !== undefined;
+          return "abcdefghijklmnopqrstuvwxyz".find(char.lower(), 1, true)[0] !== undefined;
      }
 
      let Commands: Array<Command<unknown[]>> = [];
      
      export enum TokenType {
           ASTERISK = "*",
-          IDENT = "IDENT",
+          IDENT = "id",
           SEMI = ";",
-          INT = "INT", STRING = "STRING",
+          INT = "int", STRING = "str",
           PLUS = "+", MINUS = "-", DIV = "/", MUL = "*",
+          MODIFIER = "--",
           QUOT = '"',
           LPAREN = '(',
           RPAREN = ')',
           COMMA = ",",
           PIPE = "|",
-          EOF = "EOF",
+          SPACE = " ",
+          LBRACE = "{", RBRACE = "}",
+          EOF = "end",
 
+
+          NULL = "null",
           _ANY = "any",
      }
+
+     export enum ModifierType {
+          HIDE = "hide"
+     }
+
+     const data = new Map<string, [unknown, TokenType]>();
+     export let Environment = {
+          write(k: string, v: unknown, t: TokenType): void {
+               data.set(k, [v, t]);
+          },
+          read(k: string): [unknown, TokenType] {
+               return data.get(k) || [undefined, TokenType.NULL];
+          }
+     };
 
      class Token {
           constructor(
@@ -63,6 +82,7 @@ namespace CommandHandler {
           constructor(
                public readonly text: string
           ) {
+               // this.text = this.text.gsub("%s+", " ")[0];
                this.advance();
           }
 
@@ -75,7 +95,7 @@ namespace CommandHandler {
                this.currentChar = this.text.sub(this.pos, this.pos);
           }
 
-          protected peek(): string {
+          protected _peek(): string {
                const _next = this.pos+1;
                return this.text.sub(_next, _next);
           }
@@ -88,16 +108,16 @@ namespace CommandHandler {
 
           protected integer(): number {
                let result = '';
-               while (isCharInteger(this.currentChar)) {
+               while (isCharInteger(this.currentChar) && this.currentChar) {
                     result = result + this.currentChar;
                     this.advance();
                }
                return tonumber(result) as number;
           }
 
-          protected string(): string {
+          protected string(quoteType: '"' | "'" | "`"): string {
                let result = '';
-               while (this.currentChar !== '"') {
+               while (this.currentChar !== quoteType && this.currentChar) {
                     result = result + this.currentChar;
                     this.advance();
                }
@@ -107,7 +127,7 @@ namespace CommandHandler {
 
           protected identifier(): string {
                let result = '';
-               while (isCharAlphanumeric(this.currentChar)) {
+               while (isCharAlphanumeric(this.currentChar) && this.currentChar) {
                     result = result + this.currentChar;
                     this.advance();
                }
@@ -124,23 +144,46 @@ namespace CommandHandler {
                     if (isCharInteger(this.currentChar)) {
                          return new Token(TokenType.INT, this.integer());
                     }
-
+                    
                     switch (this.currentChar) {
-                         case '*':
-                              this.advance();
-                              return new Token(TokenType.ASTERISK, "*");
-                         case ';':
-                              this.advance();
-                              return new Token(TokenType.SEMI, ";");
-                         case ',':
-                              this.advance();
-                              return new Token(TokenType.COMMA, ',');
-                         case '"':
-                              this.advance();
-                              return new Token(TokenType.STRING, this.string());
-                         case "|":
-                              this.advance();
-                              return new Token(TokenType.PIPE, "|");
+                              case "(":
+                                   this.advance();
+                                   return new Token(TokenType.LPAREN, "(");
+                              case ")":
+                                   this.advance();
+                                   return new Token(TokenType.RPAREN, ")");
+                              case "{":
+                                   this.advance();
+                                   return new Token(TokenType.LBRACE, "{");
+                              case "}":
+                                   this.advance();
+                                   return new Token(TokenType.RBRACE, "}");
+                              case '*':
+                                   this.advance();
+                                   return new Token(TokenType.ASTERISK, "*");
+                              case ';':
+                                   this.advance();
+                                   return new Token(TokenType.SEMI, ";");
+                              case ',':
+                                   this.advance();
+                                   return new Token(TokenType.COMMA, ',');
+                              case '"':
+                              case '`':
+                              case "'":
+                                   const quoteType = this.currentChar;
+                                   this.advance();
+                                   return new Token(TokenType.STRING, this.string(quoteType));
+                              case "|":
+                                   this.advance();
+                                   return new Token(TokenType.PIPE, "|");
+                              case "-": {
+                                   this.advance();
+                                   if (this.currentChar === "-") {
+                                        this.advance();
+                                        return new Token(TokenType.MODIFIER, "--");
+                                   }
+                                   return new Token(TokenType.MINUS, "-");
+                              }
                          }
 
 
@@ -174,18 +217,37 @@ namespace CommandHandler {
                return curType;
           }
 
-          protected interpretArgs(): Token[] {
-               const args: Token[] = [];
-               args.push(this.eat());
-               while (this.is(TokenType.COMMA)) {
-                    args.push(this.eat());
+          
+          protected interpretArgs(cmd: Command<[...unknown[]]>): unknown[] {
+               const args: Array<[unknown, TokenType]> = [];
+               args.push(this.expr());
+               while (!this.is(TokenType.EOF) && !this.is(TokenType.PIPE)) {
+                    args.push(this.expr());
                }
 
+               cmd.requiredParameters.forEach((t, i) => {
+                    
+                    let arg = args[i];
+                    warn(`arg mismatch: req:${t.name}, current: ${arg&& arg[1]}`);
+                    if (t.type === TokenType._ANY)
+                         return;
+                    if (!arg) {
+                         this.error("argument mismatch");
+                         return;                                
+                    }
+                    if ((!t.type.includes(arg[1]))) {
+                         this.error(`invalid cast "${arg[1]}" -> "${t.type.join("|")}"`);
+                         return;
+                    }
+               });
+
+             
                return args;
           }
 
           protected interpretCommand(source: Player): CommandResult {
-               this.eat(TokenType.ASTERISK); //prefix yo
+               // this.eat(TokenType.ASTERISK); //prefix yo
+               // yo DONT have this prefix IMPLEMENT IT SAOMEWHERE ELSE NIGGA
 
                const command = this.eat(TokenType.IDENT).value;
                
@@ -195,51 +257,72 @@ namespace CommandHandler {
                     throw `command "${command}" doesnt exist`;
                }
 
+               let modifiers: ModifierType[] = [];
+               while (this.is(TokenType.MODIFIER)) {
+                    this.eat(TokenType.MODIFIER);
+                    const modifierStr = this.eat(TokenType.IDENT);
+                    for (const [_, md] of pairs(ModifierType)) {
+                         if (modifierStr.value === md) {
+                              modifiers.push(modifierStr.value as ModifierType);
+                         }
+                    }
+               }
+
                if (!this.is(TokenType.SEMI)) {
                     this.eat(TokenType.EOF);
                     return executingCommand.exe({'source': source, 'argv': []});
                }
                this.eat(TokenType.SEMI);
                
-               const args = this.interpretArgs();
-               executingCommand.requiredParameters.forEach((t, i) => {
-                    let arg = args[i];
-                    if (!arg) {
-                         this.error("argument mismatch");
-                         return;                                
-                    }
-                    if ((arg.tokenType !== t.type)) {
-                         this.error(`invalid cast "${arg.tokenType}" -> "${t.type}"`);
-                         return;
-                    }
-               });
-
-               const argv: unknown[] = [];
-               args.forEach((v, i) => {
-                    (argv)[i] = v.value;
-               });
-
-               print("ARGV:", argv);
+               const argv = this.interpretArgs(executingCommand);
 
                let result = executingCommand.exe({'source': source, 'argv': argv}); 
+               if (modifiers.includes(ModifierType.HIDE)) {
+                    result.hide = true;
+               }
                return result;
           }
 
-          protected expr(): unknown {
+          protected expr(): [unknown, TokenType] {
+               const tok = this.currentToken;
                switch (this.currentToken.tokenType) {
                     case TokenType.LPAREN: {
                          this.eat(TokenType.LPAREN);
-                         const result = this.expr();
+                         const [result, t] = this.expr();
                          this.eat(TokenType.RPAREN);
-                         return result;
+                         return [result, t];
                     }
+                    case TokenType.LBRACE: {
+                         this.eat(TokenType.LBRACE);
+                         const id = this.eat(TokenType.IDENT).value;
+                         let cast: TokenType|undefined;
+                         for (const [k, v] of pairs(TokenType)) {
+                              if (v === id) {
+                                   cast = v;
+                                   break;
+                              }
+                         }
+                         if (!cast) {
+                              this.error("unknown cast type");
+                              throw "";
+                         }
+                         this.eat(TokenType.RBRACE);
+                         return [this.expr()[0], cast];
+                    }
+
+                    case TokenType.IDENT:
+                         this.eat(TokenType.IDENT);
+                         return Environment.read(tok.value as string);
                     case TokenType.STRING:
-                         return this.currentToken.value;
+                         this.eat(TokenType.STRING);
+                         return [tok.value, TokenType.STRING];
                     case TokenType.INT:
-                         return this.currentToken.value;
+                         this.eat(TokenType.INT);
+                         return [tonumber(tok.value), TokenType.INT];
                     default:
                          this.error("expression failed");
                }
+               throw "";
           }
 
           protected is(t: TokenType) {
@@ -258,22 +341,34 @@ namespace CommandHandler {
      }
 
      interface CommandInfo<t extends unknown[]> {
-          source: Player;
-          argv: t;
+          readonly source: Player;
+          readonly argv: t;
      }
 
-     interface CommandParameter {
-          name: string,
-          type: TokenType
+     export interface CommandParameter {
+          readonly name: string,
+          readonly type: TokenType[] | TokenType._ANY
      }
 
-     interface CommandResult {
+     export interface CommandResult {
           success: boolean;
           message?: string;
+          hide?: true;
      }
 
      export class Command<t extends unknown[]> {
           public static registered: Command<[...unknown[]]>[] = [];
+
+          public static getCommandFromName(name: string): Command<unknown[]> | undefined {
+               let command = this.registered.find(v => {
+                    const matches = v.name.lower() === name.lower();
+                    if (!matches) {
+                         return v.aliases?.includes(name.lower());
+                    }
+                    return matches;
+               });
+               return command;
+          }
 
           private bound = [];
 
@@ -283,10 +378,27 @@ namespace CommandHandler {
                public readonly permissionLevel: PermissionStatus,
                public readonly requiredParameters: CommandParameter[],
                public readonly exe: (cmdInfo: CommandInfo<t>) => CommandResult,
+               public readonly aliases?: string[],
                public readonly optionalParameters?: CommandParameter[],
           ) {
                this.name = this.name.lower();
                Command.registered.push(this as unknown as Command<[...unknown[]]>);
+          }
+
+          public getRequiredParameterTypes(): TokenType[][] {
+               const pTypes: TokenType[][] = [];
+               this.requiredParameters.forEach((v, i) => {
+                    pTypes[i] = v.type as TokenType[];
+               });
+               return pTypes;
+          }
+
+          public getOptionalParameterTypes(): TokenType[][] {
+               const pTypes: TokenType[][] = [];
+               this.optionalParameters?.forEach((v, i) => {
+                    pTypes[i] = v.type as TokenType[];
+               });
+               return pTypes;
           }
      }
           
@@ -296,13 +408,13 @@ namespace CommandHandler {
           return p.interpret(source);
      }
 
-     enum PermissionStatus {
+     export enum PermissionStatus {
           None,
           Limited,
           Full
      }
 
-     class Permission {
+     export class Permission {
           public static Registered: Set<Permission> = new Set();
           
           public static GetPlayerPermission(player: Player): PermissionStatus {
@@ -330,40 +442,138 @@ namespace CommandHandler {
 
      const _LOCAL_PERMISSION = new Permission(PermissionStatus.Full, LocalPlayer.UserId, LocalPlayer);
 
-     const help = new Command<[TokenType.STRING]>(
+     // internal commands prob dont remove these
+
+     //#region core commands
+
+     // CMDS
+     new Command<[]>(
+          "cmds",
+          "list all the commands",
+          PermissionStatus.Limited,
+          [],
+     (cmdinfo) => {
+          let commandNames: string[] = [];
+          Command.registered.forEach(v => {
+               commandNames.push(v.name);
+          });
+          return {'success': true, 'message': "Commands: " + commandNames.join(", ")};
+     });
+
+     // HELP
+     new Command<[string]>(
           "help",
-          "gives information about a certain command",
+          "retrieve information about the specified command",
           PermissionStatus.Limited,
           [
                {
                     'name': "command",
-                    'type': TokenType.STRING
+                    'type': [TokenType.STRING]
                }
           ],
           (cmdInfo) => {
                const result: CommandResult = {
                     'success': false,
-                    'message': ""
+                    'message': "unknown"
                };
 
-               const found = Command.registered.find(v => v.name.lower() === cmdInfo.argv[0].lower());
+               const found = Command.getCommandFromName(cmdInfo.argv[0]);
                if (!found) {
                     result.message = "Command doesnt exist";
                     return result;
                }
 
+               let reqParamTypes: string[] = [];
+               found.getRequiredParameterTypes().forEach(v => {
+                    reqParamTypes.push((typeIs(v, "table") && v.join(" | ")) || v as unknown as string);
+               });
+
+               let optParamTypes: string[] = [];
+               found.getOptionalParameterTypes().forEach(v => {
+                    reqParamTypes.push((typeIs(v, "table") && v.join(" | ")) || v as unknown as string);
+               });
+
                result.success = true;
-               result.message = `${found.name}: ${found.description}`;
+               result.message = `${found.name} <${reqParamTypes.join("><")}> <${optParamTypes.join("?><")}?>: ${found.description}`;
                
                return result;
+          },
+          ['-h']
+     );
+
+     new Command<[string, unknown, TokenType|undefined]>(
+          "var",
+          "assign a variable to any value",
+          PermissionStatus.Limited,
+          [
+               {'name': "identifier", "type": [TokenType.STRING]},
+               {'name': "value", "type": TokenType._ANY},
+          ],
+          (cmdInfo) => {
+               let ident = cmdInfo.argv[0];
+               let value = cmdInfo.argv[1];
+               let typeCast = cmdInfo.argv[2];
+
+               Environment.write(ident, value, typeCast || TokenType._ANY);
+
+               return {'success': true, 'message': `${ident} = ${value}`};
+          },
+          [],
+          [
+               {'name': "cast type", 'type': [TokenType.IDENT]}
+          ]
+     );
+     //#endregion
+}
+
+//#region IMPLEMENTED COMMANDS
+{
+     const command = CommandHandler.Command;
+     const tokenType = CommandHandler.TokenType;
+     const permStatus = CommandHandler.PermissionStatus;
+     type param = CommandHandler.CommandParameter;
+
+     new command<[string]>(
+          "say",
+          "say the specified text in chat",
+          permStatus.Limited,
+          [
+               {
+                    'name': "text",
+                    "type": [tokenType.STRING, tokenType.IDENT]
+               }
+          ],
+          (cmdInfo) => {
+               let text = cmdInfo.argv[0];
+               sendChat(text);
+               return {'hide': true, 'success': true};
+          }
+     );
+
+     new command<[number]>(
+          "speed",
+          "set the walkspeed",
+          permStatus.Limited,
+          [
+               {
+                    'name': "the speed number",
+                    'type': [tokenType.INT]
+               }
+          ],
+          (cmdinfo) => {
+               const speed = cmdinfo.argv[0];
+               let char = LocalPlayer.Character || LocalPlayer.CharacterAdded.Wait()[0];
+               let hum = char.FindFirstChildWhichIsA("Humanoid");
+               if (!hum)
+                    return {'success': false, 'hide': true};
+               hum.WalkSpeed = speed;
+               return {'success': true, 'hide': true};
           }
      );
 }
  
-// arguments and runtime commands still unimplemented
-// work on CommandHandler's command based things, then work on runtime soon
-
 // text chat handler
+const outSend = "$out";
 game.GetService("TextChatService").OnIncomingMessage = (message) => {
      task.spawn(() => {
           if (message.Status !== Enum.TextChatMessageStatus.Success) {
@@ -374,18 +584,39 @@ game.GetService("TextChatService").OnIncomingMessage = (message) => {
           if (!source)
                return;
 
-          let result = CommandHandler.ExecuteCommand(source, message.Text);
-          
+          if (message.Text.sub(1, 1) !== "*")
+               return;
+
+          if (message.Text.sub(1, outSend.size()).lower() === outSend.lower()) {
+               return;
+          }
+
+          let [success, _result] = pcall(CommandHandler.ExecuteCommand, source, message.Text.sub(2));
+
+          if (!success) {
+               sendChat(`${outSend}: er: ${(_result as string)?.sub(0, 75)}...`);
+               return;
+          }
+
+          const result: Array<CommandHandler.CommandResult> = _result as Array<CommandHandler.CommandResult>;
+
+
           const outs: string[] = [];
-          result.forEach(v => {
-               outs.push((v.success && v.message) || "undefined");
-          });
+          for (const v of result) {
+               if (v.hide) {
+                    continue;
+               }
+               outs.push((v.message?.sub(1, 100)) || "undefined");
+          }
 
           if (result) {
-               task.wait(2);
-               sendChat("$dbg: " + tostring(outs.join(", ")));
+               for (const value of outs) {
+                    sendChat(`${outSend}: ${value}`);
+                    task.wait(1);
+               }
           }
      });
+
      return undefined;
 };
 
