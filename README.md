@@ -4,32 +4,33 @@ a simple interpreted command system
 
 NOTE: **the prefix "*" is not required by the base language, and is only implemented in the reader for chat**
 
-## Example Usage:
-
-simple command execution without any arguments
-```php
-*cmds
-```
-
-Passing `"cmds"` into the `<string>` parameter for the `help` command
-outputs the description of `cmds`
-```php
-*help; "cmds"
-```
-
-Says `Hello!` in chat.
-
-note: for most commands, you will have to explicitly cast the specific type for the argument 
-```php
-*var; "myVar" "Hello!" | say; {str}myVar
-```
+> ## Example Usage:
+>
+>simple command execution without any arguments
+>```php
+>*cmds
+>```
+>
+>Passing `"cmds"` into the `<string>` parameter for the `help` command
+>outputs the description of `cmds`
+>```php
+>*help; "cmds"
+>```
+>
+>Says `Hello!` in chat.
+>
+>- note: for most commands, you will have to explicitly cast the specific type for the argument 
+>```php
+>*var; "myVar" "Hello!" | say; {str}myVar
+>```
 
 ## Implementing custom commands
 
 **Using CommandHandler, there's a few things you'll need.**
-   `CommandHandler.Command` - The class for adding new commands
-   `CommandHandler.TokenType` - The argument types
-   `CommandHandler.PermissionStatus` - The minimum permission status that is required for the command
+
+> - `CommandHandler.Command` - The class for adding new commands
+> - `CommandHandler.TokenType` - The argument types
+> - `CommandHandler.PermissionStatus` - The minimum permission status that is required for the command
 
 Creating a custom "say" command that chats the first argument 
 
