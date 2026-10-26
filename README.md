@@ -4,7 +4,7 @@ a simple interpreted command system
 
 NOTE: **the prefix "*" is not required by the base language, and is only implemented in the reader for chat**
 
-# Example Usage:
+## Example Usage:
 
 simple command execution without any arguments
 ```php
